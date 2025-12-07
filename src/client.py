@@ -5,10 +5,11 @@ import json
 import uuid
 import sys
 import os
+from aiohttp import web
 
 
 class JupyterKernelClient:
-    def __init__(self, jupyter_url, token):
+    def __init__(self, jupyter_url: str, token: str):
         """
         Generic Jupyter Kernel WebSocket client for executing arbitrary code.
         
@@ -28,8 +29,8 @@ class JupyterKernelClient:
             'Content-Type': 'application/json'
         }
     
-    def create_session(self, notebook_path='test.ipynb', kernel_name='python3'):
-        """Create or get existing session"""
+    def create_session(self, notebook_path: str = 'test.ipynb', kernel_name: str = 'python3'):
+        """Create or get existing session. Takes the first avaliable session by default"""
         # First, try to get existing sessions
         resp = requests.get(
             f'{self.jupyter_url}/api/sessions',
@@ -41,6 +42,7 @@ class JupyterKernelClient:
         sessions = resp.json()
         if sessions:
             # Use first available session
+            # TODO change this behavior
             self.session_id = sessions[0]['id']
             self.kernel_id = sessions[0]['kernel']['id']
             print(f"create_session() : using existing session: {self.session_id}")
@@ -86,7 +88,7 @@ class JupyterKernelClient:
         )
         print(f"connect_websocket() : WebSocket connected to kernel")
     
-    async def execute_code(self, code, timeout=60, verbose=True):
+    async def execute_code(self, code: str, timeout: int = 60, verbose: bool = True):
         """
         Execute arbitrary code in the kernel and return all outputs.
         
@@ -108,6 +110,7 @@ class JupyterKernelClient:
             print(f"{'='*60}\n")
         
         # Construct execute_request message
+        # https://jupyter-client.readthedocs.io/en/stable/messaging.html#the-wire-protocol
         message = {
             'header': {
                 'msg_id': msg_id,
@@ -120,10 +123,10 @@ class JupyterKernelClient:
             'metadata': {},
             'content': {
                 'code': code,
-                'silent': False,
-                'store_history': True,
+                'silent': False,  # We may want to set it to True
+                'store_history': True, # Same for this flag
                 'user_expressions': {},
-                'allow_stdin': False,
+                'allow_stdin': False, # Currently we run in the non-interactive mode
                 'stop_on_error': True
             },
             'buffers': [],
@@ -140,7 +143,9 @@ class JupyterKernelClient:
         
         try:
             async with asyncio.timeout(timeout):
-                while True:
+                received_output = False
+                got_exec_reply = False
+                while (not received_output) or (not got_exec_reply):
                     response = await self.ws.recv()
                     msg = json.loads(response)
                     
@@ -161,6 +166,7 @@ class JupyterKernelClient:
                             'text': msg['content']['text']
                         }
                         outputs.append(output)
+                        received_output = True
                         if verbose:
                             print(f"{output['name']}: {output['text'][:50]}...")
                     
@@ -171,6 +177,7 @@ class JupyterKernelClient:
                             'execution_count': msg['content']['execution_count']
                         }
                         outputs.append(output)
+                        received_output = True
                         if verbose:
                             print(f"Result: {str(output['data'])[:50]}...")
                     
@@ -180,6 +187,7 @@ class JupyterKernelClient:
                             'data': msg['content']['data']
                         }
                         outputs.append(output)
+                        received_output = True
                         if verbose:
                             print(f"Display: {list(output['data'].keys())}")
                     
@@ -189,17 +197,21 @@ class JupyterKernelClient:
                             'evalue': msg['content']['evalue'],
                             'traceback': msg['content']['traceback']
                         }
+                        received_output = True
                         if verbose:
                             print(f"\n Error: {error['ename']}: {error['evalue']}")
-                    
+
+                    # Main message reply type
                     elif msg_type == 'execute_reply':
                         status = msg['content']['status']
+
+                        # if status is ok, then msg contains "payload" and "user_expressions" dicts
+                        got_exec_reply = True
                         if verbose:
-                            print(f"\n Execution {status}")
-                        break
-        
+                            print(f"\nExecution {status}")
+
         except asyncio.TimeoutError:
-            print(f"\n Execution timed out after {timeout}s")
+            print(f"\nExecution timed out after {timeout}s")
             status = 'timeout'
         
         return {
@@ -209,7 +221,7 @@ class JupyterKernelClient:
             'msg_id': msg_id
         }
     
-    async def execute_and_get_output(self, code, output_type='text', timeout=60):
+    async def execute_and_get_output(self, code: str, output_type: str = 'text', timeout: int = 60, verbose: bool = False):
         """
         Execute code and return simplified output.
         
@@ -221,7 +233,7 @@ class JupyterKernelClient:
         Returns:
             String output or dict of all outputs
         """
-        result = await self.execute_code(code, timeout=timeout, verbose=False)
+        result = await self.execute_code(code, timeout=timeout, verbose=verbose)
         
         if result['status'] != 'ok':
             if result['error']:
@@ -238,24 +250,25 @@ class JupyterKernelClient:
         for output in result['outputs']:
             if output_type == 'text' and output['type'] == 'stream':
                 output_text.append(output['text'])
-            elif output_type == 'result' and output['type'] == 'execute_result':
+            elif output_type == 'text' and output['type'] == 'execute_result':
                 # Get plain text representation
                 data = output['data']
                 if 'text/plain' in data:
-                    output_text.append(data['text/plain'])
+                    output_text.append(str(data['text/plain']))
                 else:
                     output_text.append(str(data))
-        
+            # TODO change output_type to something more meaningful
+
         return ''.join(output_text)
    
 
-    async def http_request(self, method, path, headers=None, body=None, timeout=60):
+    async def http_request(self, method, url, headers=None, body=None, timeout=60):
         """
         Send an HTTP request through the kernel to localhost.
         
         Args:
             method: HTTP method (GET, POST, etc.)
-            path: URL path (e.g., '/api/generate')
+            url: endpoint on Jupyter server
             headers: Dict of HTTP headers
             body: Request body (will be JSON encoded if dict)
             timeout: Request timeout
@@ -274,7 +287,7 @@ class JupyterKernelClient:
             body_str = body or ''
         
         # Escape strings for Python code
-        body_escaped = body_str.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n')
+        body_escaped = body_str.replace('\\', '\\\\').replace("\'", "\\'").replace("\"", "\\").replace('\n', '\\n')
         headers_json = json.dumps(headers)
         
         code = f'''
@@ -282,13 +295,13 @@ import requests
 import json
 
 try:
-    url = f'http://localhost:11434{path}'
+    url = f'{url}'
     
     response = requests.request(
         method='{method}',
         url=url,
         headers={headers_json},
-        data='''{body_escaped}''',
+        data=\'\'\'{body_escaped}\'\'\',
         timeout={timeout}
     )
     
@@ -314,6 +327,74 @@ except Exception as e:
         
         output = await self.execute_and_get_output(code, output_type='text', timeout=timeout)
         return json.loads(output.strip())
+
+
+    async def start_http_proxy_mode(self, host: str, port: int, timeout: int):
+        """
+        Start HTTP proxy server that forwards requests through Jupyter kernel.
+
+        Args:
+            host: Host to bind to
+            port: Port to bind to
+        """
+
+        async def proxy_handler(request):
+            """Handle incoming HTTP requests and proxy through kernel"""
+            try:
+                # Read request body
+                body = await request.read()
+                body_str = body.decode('utf-8') if body else None
+
+                # Forward to kernel
+                result = await self.http_request(
+                    method=request.method,
+                    path=request.url,
+                    headers=dict(request.headers),
+                    body=body_str,
+                    timeout=timeout
+                )
+
+                if not result.get('ok', False):
+                    print("proxy_handler() : http payload error : ", end="")
+                    if 'error' in result:
+                        print(result['error'])
+                        return web.Response(
+                            text=json.dumps({'error': result['error']}),
+                            status=500,
+                            content_type='application/json'
+                        )
+                    else:
+                        print("unknown")
+
+                # Return response
+                return web.Response(
+                    text=result['body'],
+                    status=result['status_code'],
+                    headers=result.get('headers', {})
+                )
+
+            except Exception as e:
+                print(f"proxy_handler() : exception : {e}")
+                return web.Response(
+                    text=json.dumps({'error': str(e)}),
+                    status=500,
+                    content_type='application/json'
+                )
+
+        # Create web app
+        app = web.Application()
+        app.router.add_route('*', '/{path:.*}', proxy_handler)
+
+        # Start server
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, host, port)
+        await site.start()
+
+        print(f"  HTTP Proxy Mode started on http://{host}:{port}")
+        print(f"  All requests will be forwarded through Jupyter kernel")
+
+        return runner
 
 
     async def close(self):
