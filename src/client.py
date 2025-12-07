@@ -87,28 +87,27 @@ class JupyterKernelClient:
             # ssl=ssl.create_default_context()
         )
         print(f"connect_websocket() : WebSocket connected to kernel")
-    
-    async def execute_code(self, code: str, timeout: int = 60, verbose: bool = True):
+
+    async def execute_code_nowait(self, code: str, timeout: int = 60, verbose: bool = True):
         """
-        Execute arbitrary code in the kernel and return all outputs.
-        
+        Execute arbitrary code in the kernel and return its message id.
+
         Args:
             code: Python code to execute
-            timeout: Maximum time to wait for execution (seconds)
             verbose: Print execution progress
-            
+
         Returns:
-            dict with 'status', 'outputs', 'error' keys
+            Message id
         """
         msg_id = str(uuid.uuid4())
-        
+
         if verbose:
             print(f"\n{'='*60}")
             print(f"Executing code (msg_id: {msg_id[:8]}...):")
             print(f"{'='*60}")
             print(code)
             print(f"{'='*60}\n")
-        
+
         # Construct execute_request message
         # https://jupyter-client.readthedocs.io/en/stable/messaging.html#the-wire-protocol
         message = {
@@ -132,15 +131,29 @@ class JupyterKernelClient:
             'buffers': [],
             'channel': 'shell'
         }
-        
+
         # Send execute request
         await self.ws.send(json.dumps(message))
-        
+        return msg_id
+
+
+    async def collect_execution_output(self, msg_id: str, timeout: int = 60, verbose: bool = True):
+        """
+        Wait and return the outputs of a code cell.
+
+        Args:
+            msg_id: Message id
+            timeout: Maximum time to wait for execution (seconds)
+            verbose: Print execution progress
+
+        Returns:
+            dict with 'status', 'outputs', 'error' keys
+        """
         # Collect all outputs
         outputs = []
         error = None
         status = 'unknown'
-        
+
         try:
             async with asyncio.timeout(timeout):
                 received_output = False
@@ -148,16 +161,16 @@ class JupyterKernelClient:
                 while (not received_output) or (not got_exec_reply):
                     response = await self.ws.recv()
                     msg = json.loads(response)
-                    
+
                     # Only process messages related to our request
                     if msg.get('parent_header', {}).get('msg_id') != msg_id:
                         continue
-                    
+
                     msg_type = msg.get('msg_type')
-                    
+
                     if verbose:
                         print(f"[{msg_type}]", end=' ')
-                    
+
                     # Collect different types of output
                     if msg_type == 'stream':
                         output = {
@@ -169,7 +182,7 @@ class JupyterKernelClient:
                         received_output = True
                         if verbose:
                             print(f"{output['name']}: {output['text'][:50]}...")
-                    
+
                     elif msg_type == 'execute_result':
                         output = {
                             'type': 'execute_result',
@@ -180,7 +193,7 @@ class JupyterKernelClient:
                         received_output = True
                         if verbose:
                             print(f"Result: {str(output['data'])[:50]}...")
-                    
+
                     elif msg_type == 'display_data':
                         output = {
                             'type': 'display_data',
@@ -190,7 +203,7 @@ class JupyterKernelClient:
                         received_output = True
                         if verbose:
                             print(f"Display: {list(output['data'].keys())}")
-                    
+
                     elif msg_type == 'error':
                         error = {
                             'ename': msg['content']['ename'],
@@ -213,14 +226,32 @@ class JupyterKernelClient:
         except asyncio.TimeoutError:
             print(f"\nExecution timed out after {timeout}s")
             status = 'timeout'
-        
+    
         return {
             'status': status,
             'outputs': outputs,
             'error': error,
             'msg_id': msg_id
         }
-    
+
+
+    async def execute_code(self, code: str, timeout: int = 60, verbose: bool = True):
+        """
+        Execute arbitrary code in the kernel and return all outputs.
+        
+        Args:
+            code: Python code to execute
+            timeout: Maximum time to wait for execution (seconds)
+            verbose: Print execution progress
+            
+        Returns:
+            dict with 'status', 'outputs', 'error' keys
+        """
+        msg_id = await self.execute_code_nowait(code, verbose)
+        result = await self.collect_execution_output(msg_id, timeout, verbose)
+        return result
+
+
     async def execute_and_get_output(self, code: str, output_type: str = 'text', timeout: int = 60, verbose: bool = False):
         """
         Execute code and return simplified output.
@@ -262,7 +293,7 @@ class JupyterKernelClient:
         return ''.join(output_text)
    
 
-    async def http_request(self, method, url, headers=None, body=None, timeout=60):
+    async def http_request(self, method: str, url: str, headers: dict = None, body = None, timeout: int = 60, verbose: bool = True):
         """
         Send an HTTP request through the kernel to localhost.
         
@@ -272,6 +303,7 @@ class JupyterKernelClient:
             headers: Dict of HTTP headers
             body: Request body (will be JSON encoded if dict)
             timeout: Request timeout
+            verbose: Print verbose output
             
         Returns:
             dict with 'status_code', 'headers', 'body' keys
@@ -325,7 +357,7 @@ except Exception as e:
     print(json.dumps(error_result))
 '''
         
-        output = await self.execute_and_get_output(code, output_type='text', timeout=timeout)
+        output = await self.execute_and_get_output(code, output_type='text', timeout=timeout, verbose=verbose)
         return json.loads(output.strip())
 
 

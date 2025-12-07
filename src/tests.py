@@ -44,24 +44,25 @@ print(f"Square root of 144 is {result}")
         await cli.close()
 
 
-async def test_http_request(token, jupyter_ur):
+async def test_http_request(token, jupyter_url):
     """Test HTTP request function"""
     print("\n" + "="*60)
     print("TEST 2: HTTP Request via Kernel")
     print("="*60)
 
-    client = JupyterKernelClient(
+    cli = client.JupyterKernelClient(
         jupyter_url,
         token
     )
 
     try:
-        client.create_session()
-        await client.connect_websocket()
+        cli.create_session()
+        await cli.connect_websocket()
 
         # First ensure Ollama is running in the kernel
         print("\n1. Starting http server in kernel...")
         setup_code = '''
+from threading import Thread
 from http.server import BaseHTTPRequestHandler, HTTPServer
 host = "0.0.0.0"
 port = 12333
@@ -73,14 +74,24 @@ class MyServer(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(bytes("response from jupyter", "utf-8"))
 
-server = HTTPServer((host, port), MyServer)
-server.handle_request()  # serve and die
+    def log_message(self, format, *args):
+        return
+
+def serve():
+    server = HTTPServer((host, port), MyServer)
+    server.handle_request()  # serve and die
+
+thread = Thread(target=serve)
+thread.start() # The thread will die after we execute a request
 '''
-        await client.execute_code(setup_code, verbose=False)
+        # No await
+        server_msg = await cli.execute_code_nowait(setup_code, verbose=False)
 
         # Test 1: GET request
-        print("\n2. Testing GET request to /...")
-        result = await client.http_request('GET', '127.0.0.1:12333/')
+        # TODO understand why stdouts of different messages somehow get mixed
+        print("\n2. Testing GET request to the server...")
+        result = await cli.http_request('GET', 'http://127.0.0.1:12333/', verbose=True)
+        print(result)
         print(f"   Status: {result['status_code']}")
         print(f"   Response: {result['body'][:100]}...")
         assert(result['body'] == "response from jupyter")
@@ -88,4 +99,4 @@ server.handle_request()  # serve and die
 
 
     finally:
-        await client.close()
+        await cli.close()
