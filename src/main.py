@@ -14,6 +14,7 @@ Jupyter Kernel WebSocket Client - Test Suite
 """)
     asyncio.run(tests.test_basic_execution(args.token, args.url))
     asyncio.run(tests.test_http_request(args.token, args.url))
+    asyncio.run(tests.test_stdin_interaction(args.token, args.url))
     print("All tests passed")
 
 

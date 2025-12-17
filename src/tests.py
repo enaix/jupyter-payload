@@ -1,3 +1,5 @@
+import asyncio
+
 import client
 
 
@@ -86,7 +88,7 @@ thread = Thread(target=serve)
 thread.start() # The thread will die after we execute a request
 '''
         # No await
-        server_msg = await cli.execute_code_nowait(setup_code, verbose=False)
+        server_msg, _ = await cli.execute_code_nowait(setup_code, verbose=False)
 
         # Test 1: GET request
         # TODO understand why stdouts of different messages somehow get mixed
@@ -103,3 +105,94 @@ thread.start() # The thread will die after we execute a request
         await cli.close()
 
 
+async def test_stdin_interaction(token, jupyter_url):
+    """Test stdin interaction with kernel"""
+    print("\n" + "="*60)
+    print("TEST 3: Stdin Interaction")
+    print("="*60)
+
+    cli = client.JupyterKernelClient(
+        jupyter_url,
+        token
+    )
+
+    try:
+        cli.create_session()
+        await cli.connect_websocket()
+
+        print("\n1. Executing code that requests stdin...")
+
+        # Code that immediately requests input and echoes 3 times
+        stdin_code = '''
+for i in range(3):
+    user_input = input(f"Enter text (attempt {i+1}/3): ")
+    print(f"Echo {i+1}: {user_input}")
+print("Done!")
+'''
+
+        # Execute without waiting for completion
+        msg_id, msg_header = await cli.execute_code_nowait(stdin_code, verbose=True, stdin=True)
+
+        print("\n2. Handling stdin requests and collecting outputs...")
+
+        outputs = []
+        error = None
+        status = 'unknown'
+        stdin_count = 0
+        timeout_seconds = 60
+        sent_output = ""
+
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                got_exec_reply = False
+
+                while not got_exec_reply:
+                    msg = await cli.read_message(timeout_seconds, verbose=True)
+
+                    # Only process messages related to our execution
+                    if msg.get('msg_id') != msg_id:
+                        continue
+
+                    msg_type = msg.get('msg_type')
+
+                    # Handle stdin request
+                    if msg_type == 'input_request':
+                        prompt = msg['_msg']['content'].get('prompt', '')
+                        print(f"    Stdin request #{stdin_count}: {prompt}")
+
+                        stdin_count += 1
+                        # Send input reply
+                        input_value = f"Test input #{stdin_count};"
+                        await cli.send_message(cli.new_msg_id(), 'input_reply', {'value': input_value}, msg['_msg']['header'])
+                        print(f"    >>> Sent: {input_value}")
+                        sent_output += input_value
+
+                    else:
+                        # Handle outputs already processed by read_message
+                        if msg.get('output') is not None:
+                            outputs.append(msg['output'])
+
+                        # Handle errors
+                        if msg.get('error') is not None:
+                            error = msg['error']
+
+                        # Handle execution completion
+                        if msg.get('status') is not None:
+                            status = msg['status']
+                            got_exec_reply = True
+
+        except asyncio.TimeoutError:
+            print(f"\n    Execution timed out after {timeout_seconds}s")
+            status = 'timeout'
+
+        output_str = cli.glue_output(outputs)
+        # Verify results
+        print("\n3. Verifying results...")
+        print(f"   Status: {status}")
+        print(f"   Stdin requests handled: {stdin_count}")
+        print(f"   Outputs collected: {output_str}")
+
+        assert output_str == sent_output, "Echoed stdout differs from sent stdout"
+
+    finally:
+        await cli.close()

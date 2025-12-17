@@ -88,6 +88,33 @@ class JupyterKernelClient:
         )
         print(f"connect_websocket() : WebSocket connected to kernel")
 
+
+    async def send_message(self, msg_id: str, msg_type: str, content: dict, parent_header: dict = {}):
+        message = {
+            'header': {
+                'msg_id': msg_id,
+                'username': 'client',
+                'session': self.session_id or str(uuid.uuid4()),
+                'msg_type': msg_type,
+                'version': '5.3'
+            },
+            'parent_header': parent_header,
+            'metadata': {},
+            'content': content,
+            'buffers': [],
+            'channel': 'shell'
+        }
+
+        # Send execute request
+        # TODO do we need a timeout?
+        await self.ws.send(json.dumps(message))
+        return message['header']
+
+
+    def new_msg_id(self):
+        return str(uuid.uuid4())
+
+
     async def execute_code_nowait(self, code: str, verbose: bool = True, stdin: bool = False):
         """
         Execute arbitrary code in the kernel and return its message id.
@@ -97,9 +124,9 @@ class JupyterKernelClient:
             verbose: Print execution progress
 
         Returns:
-            Message id
+            Message id and message header
         """
-        msg_id = str(uuid.uuid4())
+        msg_id = self.new_msg_id()
 
         if verbose:
             print(f"\n{'='*60}")
@@ -110,31 +137,18 @@ class JupyterKernelClient:
 
         # Construct execute_request message
         # https://jupyter-client.readthedocs.io/en/stable/messaging.html#the-wire-protocol
-        message = {
-            'header': {
-                'msg_id': msg_id,
-                'username': 'client',
-                'session': self.session_id or str(uuid.uuid4()),
-                'msg_type': 'execute_request',
-                'version': '5.3'
-            },
-            'parent_header': {},
-            'metadata': {},
-            'content': {
-                'code': code,
-                'silent': False,  # We may want to set it to True
-                'store_history': True, # Same for this flag
-                'user_expressions': {},
-                'allow_stdin': stdin, # Run either in the non-interactive or interactive mode
-                'stop_on_error': True
-            },
-            'buffers': [],
-            'channel': 'shell'
+        content = {
+            'code': code,
+            'silent': False,  # We may want to set it to True
+            'store_history': True, # Same for this flag
+            'user_expressions': {},
+            'allow_stdin': stdin, # Run either in the non-interactive or interactive mode
+            'stop_on_error': True
         }
 
         # Send execute request
-        await self.ws.send(json.dumps(message))
-        return msg_id
+        header = await self.send_message(msg_id, 'execute_request', content)
+        return msg_id, header
 
 
     async def collect_execution_output(self, msg_id: str, timeout: int = 60, verbose: bool = True):
@@ -281,8 +295,29 @@ class JupyterKernelClient:
             'status': status, # Only for execute_reply
             'output': output, # Skip if none
             'error': error,
-            'msg_id': msg_id
+            'msg_id': msg_id,
+            # Extra fields
+            'msg_type': msg_type,
+            '_msg': msg
         }
+
+
+    def glue_output(self, outputs: list):
+        """
+        Glues all output (text) together
+        """
+        output_text = ""
+        for output in outputs:
+            if output['type'] == 'stream':
+                output_text += output['text']
+            elif output['type'] == 'execute_result':
+                # Get plain text representation
+                data = output['data']
+                if 'text/plain' in data:
+                    output_text += str(data['text/plain'])
+                else:
+                    output_text += str(data)
+        return output_text
 
 
     async def execute_code(self, code: str, timeout: int = 60, verbose: bool = True):
@@ -297,7 +332,7 @@ class JupyterKernelClient:
         Returns:
             dict with 'status', 'outputs', 'error' keys
         """
-        msg_id = await self.execute_code_nowait(code, verbose)
+        msg_id, _ = await self.execute_code_nowait(code, verbose)
         result = await self.collect_execution_output(msg_id, timeout, verbose)
         return result
 
@@ -308,7 +343,7 @@ class JupyterKernelClient:
         
         Args:
             code: Code to execute
-            output_type: 'text' (stdout), 'result' (return value), or 'all'
+            output_type: 'text' (stdout) or 'all'
             timeout: Execution timeout
             
         Returns:
@@ -325,22 +360,9 @@ class JupyterKernelClient:
         if output_type == 'all':
             return result['outputs']
         
-        # Extract specific output type
-        output_text = []
-        
-        for output in result['outputs']:
-            if output_type == 'text' and output['type'] == 'stream':
-                output_text.append(output['text'])
-            elif output_type == 'text' and output['type'] == 'execute_result':
-                # Get plain text representation
-                data = output['data']
-                if 'text/plain' in data:
-                    output_text.append(str(data['text/plain']))
-                else:
-                    output_text.append(str(data))
-            # TODO change output_type to something more meaningful
-
-        return ''.join(output_text)
+        # TODO change output_type to something more meaningful
+        res = self.glue_output(result['outputs'])
+        return res
 
 
     async def http_request(self, method: str, url: str, headers: dict = {}, body = None, timeout: int = 60, verbose: bool = True):
