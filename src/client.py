@@ -88,7 +88,7 @@ class JupyterKernelClient:
         )
         print(f"connect_websocket() : WebSocket connected to kernel")
 
-    async def execute_code_nowait(self, code: str, timeout: int = 60, verbose: bool = True):
+    async def execute_code_nowait(self, code: str, verbose: bool = True, stdin: bool = False):
         """
         Execute arbitrary code in the kernel and return its message id.
 
@@ -125,7 +125,7 @@ class JupyterKernelClient:
                 'silent': False,  # We may want to set it to True
                 'store_history': True, # Same for this flag
                 'user_expressions': {},
-                'allow_stdin': False, # Currently we run in the non-interactive mode
+                'allow_stdin': stdin, # Run either in the non-interactive or interactive mode
                 'stop_on_error': True
             },
             'buffers': [],
@@ -139,7 +139,7 @@ class JupyterKernelClient:
 
     async def collect_execution_output(self, msg_id: str, timeout: int = 60, verbose: bool = True):
         """
-        Wait and return the outputs of a code cell.
+        Wait and return the outputs of a code cell. This function works for sequential code execution
 
         Args:
             msg_id: Message id
@@ -159,69 +159,24 @@ class JupyterKernelClient:
                 received_output = False
                 got_exec_reply = False
                 while (not received_output) or (not got_exec_reply):
-                    response = await self.ws.recv()
-                    msg = json.loads(response)
+                    msg = await self.read_message(timeout, verbose)
 
-                    # Only process messages related to our request
-                    if msg.get('parent_header', {}).get('msg_id') != msg_id:
+                    if msg['msg_id'] != msg_id:
                         continue
 
-                    msg_type = msg.get('msg_type')
-
-                    if verbose:
-                        print(f"[{msg_type}]", end=' ')
-
-                    # Collect different types of output
-                    if msg_type == 'stream':
-                        output = {
-                            'type': 'stream',
-                            'name': msg['content']['name'],  # stdout or stderr
-                            'text': msg['content']['text']
-                        }
-                        outputs.append(output)
+                    if msg.get('output') is not None:
+                        outputs.append(msg['output'])
                         received_output = True
-                        if verbose:
-                            print(f"{output['name']}: {output['text'][:50]}...")
 
-                    elif msg_type == 'execute_result':
-                        output = {
-                            'type': 'execute_result',
-                            'data': msg['content']['data'],
-                            'execution_count': msg['content']['execution_count']
-                        }
-                        outputs.append(output)
+                    if msg.get('error') is not None:
                         received_output = True
-                        if verbose:
-                            print(f"Result: {str(output['data'])[:50]}...")
+                        error = msg['error']
 
-                    elif msg_type == 'display_data':
-                        output = {
-                            'type': 'display_data',
-                            'data': msg['content']['data']
-                        }
-                        outputs.append(output)
-                        received_output = True
-                        if verbose:
-                            print(f"Display: {list(output['data'].keys())}")
-
-                    elif msg_type == 'error':
-                        error = {
-                            'ename': msg['content']['ename'],
-                            'evalue': msg['content']['evalue'],
-                            'traceback': msg['content']['traceback']
-                        }
-                        received_output = True
-                        if verbose:
-                            print(f"\n Error: {error['ename']}: {error['evalue']}")
-
-                    # Main message reply type
-                    elif msg_type == 'execute_reply':
-                        status = msg['content']['status']
-
-                        # if status is ok, then msg contains "payload" and "user_expressions" dicts
+                    if msg.get('status') is not None:
                         got_exec_reply = True
-                        if verbose:
-                            print(f"\nExecution {status}")
+                        status = msg['status']
+                        # We don't need to handle timeout here
+
 
         except asyncio.TimeoutError:
             print(f"\nExecution timed out after {timeout}s")
@@ -230,6 +185,101 @@ class JupyterKernelClient:
         return {
             'status': status,
             'outputs': outputs,
+            'error': error,
+            'msg_id': msg_id
+        }
+
+
+    async def read_message(self, timeout: int = 60, verbose: bool = True):
+        """
+        Read one message from the kernel for all cells. Should be called from an event loop
+
+        Args:
+            timeout: Maximum time to wait for execution (seconds)
+            verbose: Print execution progress
+
+        Returns:
+            dict with 'exec_reply' keys.
+        """
+        # Collect all outputs
+        error = None
+        status = None
+        output = None
+
+        try:
+            async with asyncio.timeout(timeout):
+                response = await self.ws.recv()
+                msg = json.loads(response)
+
+                msg_id = msg.get('parent_header', {}).get('msg_id')
+
+                msg_type = msg.get('msg_type')
+
+                if verbose:
+                    print(f"<<< [{msg_type}]", end=' ')
+
+                # Collect different types of output
+                # Unhandled message types:
+                # 'status': kernel status
+                # ...
+                if msg_type == 'stream':
+                    output = {
+                        'type': 'stream',
+                        'name': msg['content']['name'],  # stdout or stderr
+                        'text': msg['content']['text']
+                    }
+                    if verbose:
+                        print(f"{output['name']}: {output['text'][:50]}...")
+
+                elif msg_type == 'execute_result':
+                    output = {
+                        'type': 'execute_result',
+                        'data': msg['content']['data'],
+                        'execution_count': msg['content']['execution_count']
+                    }
+                    if verbose:
+                        print(f"Result: {str(output['data'])[:50]}...")
+
+                elif msg_type == 'display_data':
+                    output = {
+                        'type': 'display_data',
+                        'data': msg['content']['data']
+                    }
+                    if verbose:
+                        print(f"Display: {list(output['data'].keys())}")
+
+                elif msg_type == 'error':
+                    error = {
+                        'ename': msg['content']['ename'],
+                        'evalue': msg['content']['evalue'],
+                        'traceback': msg['content']['traceback']
+                    }
+                    if verbose:
+                        print(f"\n Error: {error['ename']}: {error['evalue']}")
+
+                # Main message reply type
+                elif msg_type == 'execute_reply':
+                    status = msg['content']['status']
+
+                    # if status is ok, then msg contains "payload" and "user_expressions" dicts
+                    if verbose:
+                        print(f"\nExecution {status}")
+
+                    # Avoid timeout?
+                    #if status != 'ok':
+                    #   received_output = True
+
+                else:
+                    if verbose:
+                        print(f"Ignoring f{msg_type} msg: {str(msg['content'])[:50]}...")
+
+        except asyncio.TimeoutError:
+            print(f"\nExecution timed out after {timeout}s")
+            status = 'timeout'
+
+        return {
+            'status': status, # Only for execute_reply
+            'output': output, # Skip if none
             'error': error,
             'msg_id': msg_id
         }
@@ -291,9 +341,9 @@ class JupyterKernelClient:
             # TODO change output_type to something more meaningful
 
         return ''.join(output_text)
-   
 
-    async def http_request(self, method: str, url: str, headers: dict = None, body = None, timeout: int = 60, verbose: bool = True):
+
+    async def http_request(self, method: str, url: str, headers: dict = {}, body = None, timeout: int = 60, verbose: bool = True):
         """
         Send an HTTP request through the kernel to localhost.
         
@@ -308,8 +358,6 @@ class JupyterKernelClient:
         Returns:
             dict with 'status_code', 'headers', 'body' keys
         """
-        headers = headers or {}
-        
         # Prepare body
         if isinstance(body, dict):
             body_str = json.dumps(body)

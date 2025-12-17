@@ -14,6 +14,7 @@ Jupyter Kernel WebSocket Client - Test Suite
 """)
     asyncio.run(tests.test_basic_execution(args.token, args.url))
     asyncio.run(tests.test_http_request(args.token, args.url))
+    print("All tests passed")
 
 
 async def http_proxy(base_args, args):
@@ -37,9 +38,10 @@ async def http_proxy(base_args, args):
 
 def main():
     parser = argparse.ArgumentParser(prog="jupyter-payload", formatter_class=argparse.RawDescriptionHelpFormatter, description='Jupyter server payload tool', epilog="""available commands:
-  payload Execute payload
-  proxy Launch a http proxy
-  tests Run simple tests""")
+  payload   Execute payload
+  proxy     Launch a http proxy
+  tests     Run simple tests
+  tests_inf Run tests indefinitely""")
 
     def add_default_args(p):
         p.add_argument('-t', '--token', help='jupyter api token')
@@ -89,6 +91,17 @@ def main():
         if args.token is None:
             no_token(parser)
         test(args)
+    elif args.command == "tests_inf":
+        if args.token is None:
+            no_token(parser)
+        i = 0
+        while True:
+            try:
+                test(args)
+                i+=1
+            except KeyboardInterrupt:
+                print(f"\nDone {i+1} iterations")
+                sys.exit(1)
     else:
         parser.print_help()
 

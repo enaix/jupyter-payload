@@ -39,7 +39,8 @@ print(f"Square root of 144 is {result}")
 ''', verbose=True)
         print('\"', res.strip(), '\"', sep="")
         assert(res.strip() == "Square root of 144 is 12.0")
-        
+    except AssertionError:
+        raise e
     finally:
         await cli.close()
 
@@ -96,7 +97,9 @@ thread.start() # The thread will die after we execute a request
         print(f"   Response: {result['body'][:100]}...")
         assert(result['body'] == "response from jupyter")
         print("Test passed")
-
-
+    except AssertionError:
+        raise e
     finally:
         await cli.close()
+
+

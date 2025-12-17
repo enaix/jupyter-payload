@@ -20,7 +20,8 @@ options:
   -u, --url URL      jupyter server url
 
 available commands:
-  payload Execute payload
-  proxy Launch a http proxy
-  tests Run simple tests
+  payload   Execute payload
+  proxy     Launch a http proxy
+  tests     Run simple tests
+  tests_inf Run tests indefinitely
 ```
