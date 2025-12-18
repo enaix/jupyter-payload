@@ -68,7 +68,27 @@ class JupyterKernelClient:
         self.kernel_id = data['kernel']['id']
         print(f"create_session() : created session: {self.session_id}")
         print(f"create_session() : kernel ID: {self.kernel_id}")
-    
+
+
+    def kill_session(self):
+        """Kill the current kernel session"""
+        if not self.session_id:
+            print("kill_session() : no active session to kill")
+            return
+
+        print(f"kill_session() : killing session: {self.session_id}")
+        resp = requests.delete(
+            f'{self.jupyter_url}/api/sessions/{self.session_id}',
+            headers=self._headers(),
+            verify=True
+        )
+        resp.raise_for_status()
+        print(f"kill_session() : session killed successfully")
+
+        self.session_id = None
+        self.kernel_id = None
+
+
     async def connect_websocket(self):
         """Connect to kernel WebSocket"""
         # Convert https to wss, http to ws
@@ -89,12 +109,25 @@ class JupyterKernelClient:
         print(f"connect_websocket() : WebSocket connected to kernel")
 
 
-    async def send_message(self, msg_id: str, msg_type: str, content: dict, parent_header: dict = {}):
+    async def send_message(self, msg_id: str, msg_type: str, content: dict, parent_header: dict = {}, channel: str = 'shell'):
+        """
+        Sends the message to the kernel.
+
+        Args:
+            msg_id: Generated message_id (use cli.new_msg_id)
+            msg_type: Message type (jupyter client docs)
+            content: Message contents (jupyter client docs)
+            parent_header: Parent message header of the related message. *_reply messages must include the corresponding *_request message header
+            channel: Message bus channel ('shell'/'stdin'/... from jupyter client docs)
+
+        Returns:
+            Sent message header
+        """
         message = {
             'header': {
                 'msg_id': msg_id,
                 'username': 'client',
-                'session': self.session_id or str(uuid.uuid4()),
+                'session': self.session_id,
                 'msg_type': msg_type,
                 'version': '5.3'
             },
@@ -102,7 +135,7 @@ class JupyterKernelClient:
             'metadata': {},
             'content': content,
             'buffers': [],
-            'channel': 'shell'
+            'channel': channel
         }
 
         # Send execute request
@@ -148,6 +181,7 @@ class JupyterKernelClient:
 
         # Send execute request
         header = await self.send_message(msg_id, 'execute_request', content)
+        #print("HEADER: ", header)
         return msg_id, header
 
 
@@ -219,6 +253,8 @@ class JupyterKernelClient:
         error = None
         status = None
         output = None
+        msg_id = None
+        msg_type = None
 
         try:
             async with asyncio.timeout(timeout):
@@ -277,6 +313,8 @@ class JupyterKernelClient:
 
                     # if status is ok, then msg contains "payload" and "user_expressions" dicts
                     if verbose:
+                        print("HEADER:", msg["header"])
+                        print("    PARENT HEADER:", msg["parent_header"])
                         print(f"\nExecution {status}")
 
                     # Avoid timeout?
@@ -429,74 +467,6 @@ except Exception as e:
         
         output = await self.execute_and_get_output(code, output_type='text', timeout=timeout, verbose=verbose)
         return json.loads(output.strip())
-
-
-    async def start_http_proxy_mode(self, host: str, port: int, timeout: int):
-        """
-        Start HTTP proxy server that forwards requests through Jupyter kernel.
-
-        Args:
-            host: Host to bind to
-            port: Port to bind to
-        """
-
-        async def proxy_handler(request):
-            """Handle incoming HTTP requests and proxy through kernel"""
-            try:
-                # Read request body
-                body = await request.read()
-                body_str = body.decode('utf-8') if body else None
-
-                # Forward to kernel
-                result = await self.http_request(
-                    method=request.method,
-                    path=request.url,
-                    headers=dict(request.headers),
-                    body=body_str,
-                    timeout=timeout
-                )
-
-                if not result.get('ok', False):
-                    print("proxy_handler() : http payload error : ", end="")
-                    if 'error' in result:
-                        print(result['error'])
-                        return web.Response(
-                            text=json.dumps({'error': result['error']}),
-                            status=500,
-                            content_type='application/json'
-                        )
-                    else:
-                        print("unknown")
-
-                # Return response
-                return web.Response(
-                    text=result['body'],
-                    status=result['status_code'],
-                    headers=result.get('headers', {})
-                )
-
-            except Exception as e:
-                print(f"proxy_handler() : exception : {e}")
-                return web.Response(
-                    text=json.dumps({'error': str(e)}),
-                    status=500,
-                    content_type='application/json'
-                )
-
-        # Create web app
-        app = web.Application()
-        app.router.add_route('*', '/{path:.*}', proxy_handler)
-
-        # Start server
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, host, port)
-        await site.start()
-
-        print(f"  HTTP Proxy Mode started on http://{host}:{port}")
-        print(f"  All requests will be forwarded through Jupyter kernel")
-
-        return runner
 
 
     async def close(self):

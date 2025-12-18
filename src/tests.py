@@ -126,7 +126,7 @@ async def test_stdin_interaction(token, jupyter_url):
         stdin_code = '''
 for i in range(3):
     user_input = input(f"Enter text (attempt {i+1}/3): ")
-    print(f"Echo {i+1}: {user_input}")
+    print(user_input)
 print("Done!")
 '''
 
@@ -162,10 +162,10 @@ print("Done!")
 
                         stdin_count += 1
                         # Send input reply
-                        input_value = f"Test input #{stdin_count};"
-                        await cli.send_message(cli.new_msg_id(), 'input_reply', {'value': input_value}, msg['_msg']['header'])
+                        input_value = f"Test input #{stdin_count}\n"
+                        await cli.send_message(cli.new_msg_id(), 'input_reply', {'value': input_value}, msg['_msg']['header'], channel='stdin')
                         print(f"    >>> Sent: {input_value}")
-                        sent_output += input_value
+                        sent_output += input_value + '\n'
 
                     else:
                         # Handle outputs already processed by read_message
@@ -185,6 +185,7 @@ print("Done!")
             print(f"\n    Execution timed out after {timeout_seconds}s")
             status = 'timeout'
 
+        sent_output += "Done!\n"
         output_str = cli.glue_output(outputs)
         # Verify results
         print("\n3. Verifying results...")

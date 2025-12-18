@@ -4,6 +4,7 @@ import argparse
 
 import tests
 import client
+import proxy
 
 
 def test(args):
@@ -19,19 +20,24 @@ Jupyter Kernel WebSocket Client - Test Suite
 
 
 async def http_proxy(base_args, args):
-    cl = JupyterKernelClient(base_args.url, base_args.token)
+    cli = proxy.JupyterClientProxy(base_args.url, base_args.token)
     try:
         cli.create_session()
-        await client.connect_websocket()
-        print(f"starting proxy on http://{args.bind}:{args.port}...")
-        runner = await client.start_http_proxy_mode(host=args.bind, port=args.port, timeout=args.timeout)
+        await cli.connect_websocket()
+        try:
+            runner = await cli.start_http_proxy_mode(host=args.bind, port=args.port, timeout=args.timeout)
+        except asyncio.CancelledError:
+            print("shutting down...")
+            await runner.cleanup()
+            cli.kill_session()
 
-        while True:
-            try:
-                await asyncio.sleep(1)
-            except KeyboardInterrupt:
-                print("shutting down...")
-                await runner.cleanup()
+        #while True:
+        #    try:
+        #        await asyncio.sleep(1)
+        #    except KeyboardInterrupt:
+        #        print("shutting down...")
+        #        await runner.cleanup()
+        #        cli.kill_session()
 
     finally:
         await cli.close()
