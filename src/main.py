@@ -29,18 +29,16 @@ async def http_proxy(base_args, args):
         except asyncio.CancelledError:
             print("shutting down...")
             await runner.cleanup()
-            cli.kill_session()
 
-        #while True:
-        #    try:
-        #        await asyncio.sleep(1)
-        #    except KeyboardInterrupt:
-        #        print("shutting down...")
-        #        await runner.cleanup()
-        #        cli.kill_session()
+        while True:
+            try:
+                await asyncio.sleep(1)
+            except KeyboardInterrupt:
+                print("shutting down...")
+                await runner.cleanup()
 
     finally:
-        await cli.close()
+        await cli.close(kill=True)
 
 
 def main():

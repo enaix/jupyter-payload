@@ -93,7 +93,7 @@ async def handle_request(request_data):
         }
         await output_queue.put(result)
 
-async def main():
+async def main_loop():
     """Main async loop"""
     # Start output worker
     output_task = asyncio.create_task(output_worker())
@@ -125,7 +125,9 @@ async def main():
 
 # Run the async main loop
 try:
-    asyncio.run(main())
+    #asyncio.run(main_loop())
+    await main()
+    print("Payload loop exited")
 except Exception as e:
     print(json.dumps({'error': f'Fatal: {str(e)}', 'seq_id': 'unknown'}), flush=True)
 '''
@@ -301,7 +303,7 @@ except Exception as e:
                 )
 
             except Exception as e:
-                print(f"  proxy_handler error: {e}")
+                print(f"proxy_handler() : error : {e}")
                 return web.Response(
                     text=json.dumps({'error': str(e)}),
                     status=500,

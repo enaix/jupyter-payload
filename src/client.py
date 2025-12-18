@@ -255,6 +255,7 @@ class JupyterKernelClient:
         output = None
         msg_id = None
         msg_type = None
+        msg = None
 
         try:
             async with asyncio.timeout(timeout):
@@ -326,7 +327,8 @@ class JupyterKernelClient:
                         print(f"Ignoring f{msg_type} msg: {str(msg['content'])[:50]}...")
 
         except asyncio.TimeoutError:
-            print(f"\nExecution timed out after {timeout}s")
+            if verbose:
+                print(f"\nExecution timed out after {timeout}s")
             status = 'timeout'
 
         return {
@@ -469,10 +471,10 @@ except Exception as e:
         return json.loads(output.strip())
 
 
-    async def close(self):
+    async def close(self, kill=False):
         """Close WebSocket connection"""
         if self.ws:
             await self.ws.close()
             print("close() : WebSocket closed")
-
-
+            if kill:
+                self.kill_session()
