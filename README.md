@@ -4,20 +4,22 @@ A cli tool/python library to communicate with the jupyter server. Allows to exec
 
 ## Usage:
 
-Install requirements and run `python3 src/main.py
+Install requirements and run `python3 src/main.py [ARGUMENTS...]`
 
 ```
-usage: jupyter-payload [-h] [-t TOKEN] [-u URL] [command]
+usage: jupyter-payload [-h] [-t TOKEN] [-u URL] [-v] [-vv] [command]
 
 Jupyter server payload tool
 
 positional arguments:
-  command            command to execute
+  command              command to execute
 
 options:
-  -h, --help         show this help message and exit
-  -t, --token TOKEN  jupyter api token
-  -u, --url URL      jupyter server url
+  -h, --help           show this help message and exit
+  -t, --token TOKEN    jupyter api token
+  -u, --url URL        jupyter server url
+  -v, --verbose        print verbose log
+  -vv, --very-verbose  print debug logs
 
 available commands:
   payload   Execute payload
