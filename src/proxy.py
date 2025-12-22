@@ -182,7 +182,7 @@ except Exception as e:
                                     print(f"[payload] error : {result['error']}")
                                     continue
 
-                                if seq_id and seq_id in pending_responses:
+                                if seq_id in pending_responses.keys():
                                     # Fulfill the pending response
                                     #future = pending_responses.pop(seq_id)
                                     #if not future.done():
@@ -192,8 +192,11 @@ except Exception as e:
 
                                     if verbose:
                                         print(f"{seq_id} [<<<] response from outbound : http {result.get('status_code')}")
+                                    if very_verbose:
+                                        replace_ln = '\n'.ljust(len(str(seq_id)) + 7)
+                                        print(f"{seq_id}       {result.get('body')[:50].replace('\n', replace_ln)}...")
                                     try:
-                                        pending_responses[seq_id].put(result)
+                                        await pending_responses[seq_id].put(result)
                                     except asyncio.QueueShutDown:
                                         print("receive_loop() : warning : cannot write data to a closed queue")
 
@@ -282,6 +285,11 @@ except Exception as e:
                 seq_id = seq_counter
                 seq_counter += 1
 
+                if verbose:
+                    print(f"{seq_id} [>>>] outbound connection to {request.host}")
+                if very_verbose:
+                    print(f"{seq_id}       {request.method} {request.url}")
+
                 # Read request body
                 body = await request.read()
                 body_str = body.decode('utf-8') if body else ""
@@ -290,10 +298,6 @@ except Exception as e:
                 #response_future = asyncio.Future()
                 pending_responses[seq_id] = asyncio.Queue() #response_future
 
-                if verbose:
-                    print(f"{seq_id} [>>>] outbound connection to {request.host}")
-                if very_verbose:
-                    print(f"{seq_id}       {request.method} {request.url}")
                 # Queue the request
                 await request_queue.put((
                     seq_id,
