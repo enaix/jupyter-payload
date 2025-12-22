@@ -4,7 +4,7 @@ import client
 
 
 # Example usage and test cases
-async def test_basic_execution(token, jupyter_url):
+async def test_basic_execution(token, jupyter_url, username):
     """Test basic code execution"""
     print("\n" + "="*60)
     print("TEST 1: Basic Execution")
@@ -12,7 +12,8 @@ async def test_basic_execution(token, jupyter_url):
     
     cli = client.JupyterKernelClient(
         jupyter_url,
-        token
+        token,
+        username
     )
     
     try:
@@ -47,7 +48,7 @@ print(f"Square root of 144 is {result}")
         await cli.close()
 
 
-async def test_http_request(token, jupyter_url):
+async def test_http_request(token, jupyter_url, username):
     """Test HTTP request function"""
     print("\n" + "="*60)
     print("TEST 2: HTTP Request via Kernel")
@@ -55,7 +56,8 @@ async def test_http_request(token, jupyter_url):
 
     cli = client.JupyterKernelClient(
         jupyter_url,
-        token
+        token,
+        username
     )
 
     try:
@@ -105,7 +107,7 @@ thread.start() # The thread will die after we execute a request
         await cli.close()
 
 
-async def test_stdin_interaction(token, jupyter_url):
+async def test_stdin_interaction(token, jupyter_url, username):
     """Test stdin interaction with kernel"""
     print("\n" + "="*60)
     print("TEST 3: Stdin Interaction")
@@ -113,7 +115,8 @@ async def test_stdin_interaction(token, jupyter_url):
 
     cli = client.JupyterKernelClient(
         jupyter_url,
-        token
+        token,
+        username
     )
 
     try:

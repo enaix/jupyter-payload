@@ -7,7 +7,7 @@ A cli tool/python library to communicate with the jupyter server. Allows to exec
 Install requirements and run `python3 src/main.py [ARGUMENTS...]`
 
 ```
-usage: jupyter-payload [-h] [-t TOKEN] [-u URL] [-v] [-vv] [command]
+usage: jupyter-payload [-h] [-t TOKEN] [-u URL] [--user USER] [-v] [-vv] [command]
 
 Jupyter server payload tool
 
@@ -18,6 +18,7 @@ options:
   -h, --help           show this help message and exit
   -t, --token TOKEN    jupyter api token
   -u, --url URL        jupyter server url
+  --user USER          jupyter username
   -v, --verbose        print verbose log
   -vv, --very-verbose  print debug logs
 

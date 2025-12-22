@@ -13,14 +13,14 @@ Jupyter Kernel WebSocket Client - Test Suite
 ============================================
 
 """)
-    asyncio.run(tests.test_basic_execution(args.token, args.url))
-    asyncio.run(tests.test_http_request(args.token, args.url))
-    asyncio.run(tests.test_stdin_interaction(args.token, args.url))
+    asyncio.run(tests.test_basic_execution(args.token, args.url, args.user))
+    asyncio.run(tests.test_http_request(args.token, args.url, args.user))
+    asyncio.run(tests.test_stdin_interaction(args.token, args.url, args.user))
     print("All tests passed")
 
 
 async def http_proxy(base_args, args):
-    cli = proxy.JupyterClientProxy(base_args.url, base_args.token)
+    cli = proxy.JupyterClientProxy(base_args.url, base_args.token, base_args.user)
     try:
         cli.create_session()
         await cli.connect_websocket()
@@ -51,6 +51,7 @@ def main():
     def add_default_args(p):
         p.add_argument('-t', '--token', help='jupyter api token')
         p.add_argument('-u', '--url', default="http://localhost:8888", help='jupyter server url')
+        p.add_argument('--user', default="client", help='jupyter username')
         p.add_argument('-v', '--verbose', action='store_true', help='print verbose log')
         p.add_argument('-vv', '--very-verbose', action='store_true', help='print debug logs')
 

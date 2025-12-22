@@ -9,19 +9,21 @@ from aiohttp import web
 
 
 class JupyterKernelClient:
-    def __init__(self, jupyter_url: str, token: str):
+    def __init__(self, jupyter_url: str, token: str, username: str = "client"):
         """
         Generic Jupyter Kernel WebSocket client for executing arbitrary code.
         
         Args:
             jupyter_url: e.g., 'https://jupyterhub.domain/user/username'
             token: JupyterHub API token
+            username: Jupyter username
         """
         self.jupyter_url = jupyter_url.rstrip('/')
         self.token = token
         self.session_id = None
         self.kernel_id = None
         self.ws = None
+        self.username = username
         
     def _headers(self):
         return {
@@ -126,7 +128,7 @@ class JupyterKernelClient:
         message = {
             'header': {
                 'msg_id': msg_id,
-                'username': 'client',
+                'username': self.username,
                 'session': self.session_id,
                 'msg_type': msg_type,
                 'version': '5.3'
