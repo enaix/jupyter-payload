@@ -7,31 +7,11 @@ import json
 
 class JupyterClientProxy(client.JupyterKernelClient):
 
-    async def start_http_proxy_mode(self, host: str, port: int, timeout: int):
+    async def launch_proxy_payload(self):
         """
-        Start HTTP proxy server that forwards requests through Jupyter kernel using async I/O.
-
-        Args:
-            host: Host to bind to
-            port: Port to bind to
-            timeout: Request timeout
+        Start HTTP proxy server payload on server
         """
 
-        # Queue for pending HTTP requests
-        request_queue = asyncio.Queue()
-
-        # Dictionary to track pending responses by sequence ID
-        pending_responses = {}
-
-        # Kernel ready flag
-        kernel_ready = asyncio.Event()
-
-        # Message ID for kernel execution
-        kernel_msg_id = None
-        kernel_msg_header = None
-        input_request_header = None
-
-        # Start the HTTP request handler code in the kernel
         handler_code = '''
 import json
 import sys
@@ -126,23 +106,54 @@ async def main_loop():
 # Run the async main loop
 try:
     #asyncio.run(main_loop())
-    await main()
+    await main_loop()
     print("Payload loop exited")
 except Exception as e:
     print(json.dumps({'error': f'Fatal: {str(e)}', 'seq_id': 'unknown'}), flush=True)
 '''
+        return await self.execute_code_nowait(handler_code, verbose=False, stdin=True)
 
+    
+    async def start_http_proxy_mode(self, host: str, port: int, timeout: int, verbose: bool, very_verbose: bool):
+        """
+        Start HTTP proxy server that forwards requests through Jupyter kernel using async I/O.
+
+        Args:
+            host: Host to bind to
+            port: Port to bind to
+            timeout: Request timeout
+            verbose: Print req/res logs
+            very_verbose: Print verbose communication logs
+        """
+        if very_verbose:
+            verbose = True
+
+        # Queue for pending HTTP requests
+        request_queue = asyncio.Queue()
+
+        # Dictionary to track pending responses by sequence ID
+        pending_responses = {}
+
+        # Kernel ready flag
+        kernel_io_ready = asyncio.Event()
+
+        # Message ID for kernel execution
+        kernel_msg_id = None
+        kernel_msg_header = None
+        input_request_header = None
+
+        # Start the HTTP request handler code in the kernel
         print("[main] starting kernel HTTP handler...")
-        kernel_msg_id, kernel_msg_header = await self.execute_code_nowait(handler_code, verbose=False, stdin=True)
+        kernel_msg_id, kernel_msg_header = await self.launch_proxy_payload()
 
         # Receive loop - processes messages from kernel
         async def receive_loop():
             while True:
                 try:
                     # Read message from kernel
-                    msg = await self.read_message(timeout=1, verbose=True)
+                    msg = await self.read_message(timeout=1, verbose=False)
 
-                    # Only process messages from our handler
+                    # Only process messages from the payload
                     if msg.get('msg_id') != kernel_msg_id:
                         continue
 
@@ -150,10 +161,10 @@ except Exception as e:
 
                     # Handle input request (kernel is ready for next request)
                     if msg_type == 'input_request':
-                        if kernel_ready.is_set():
+                        if kernel_io_ready.is_set():
                             print("receive_loop() : warning : another \'input_request\' received while send_loop() is still active")
                         input_request_header = msg["_msg"]['header']  # The payload theoretically should not send more input requests until the send_loop sends the next message
-                        kernel_ready.set()  # Requested stdin, notify the send_loop
+                        kernel_io_ready.set()  # Requested stdin, notify the send_loop
                         continue
 
                     # Handle stream output (HTTP response)
@@ -173,9 +184,19 @@ except Exception as e:
 
                                 if seq_id and seq_id in pending_responses:
                                     # Fulfill the pending response
-                                    future = pending_responses.pop(seq_id)
-                                    if not future.done():
-                                        future.set_result(result)
+                                    #future = pending_responses.pop(seq_id)
+                                    #if not future.done():
+                                    #    future.set_result(result)
+                                    #else:
+                                    #    print("receive_loop() : warning : cannot write data to a finished future")
+
+                                    if verbose:
+                                        print(f"{seq_id} [<<<] response from outbound : http {result.get('status_code')}")
+                                    try:
+                                        pending_responses[seq_id].put(result)
+                                    except asyncio.QueueShutDown:
+                                        print("receive_loop() : warning : cannot write data to a closed queue")
+
                                 else:
                                     print(f"receive_loop() : zombie request found with seq_id={seq_id}")
                             except json.JSONDecodeError:
@@ -201,10 +222,11 @@ except Exception as e:
             while True:
                 try:
                     # Wait for kernel to be ready
-                    await kernel_ready.wait()
+                    await kernel_io_ready.wait()
 
-                    # Get next request from queue (with timeout to allow checking kernel_ready)
+                    # Get next request from queue (with timeout to allow checking kernel_io_ready)
                     try:
+                        # Waits for the queue
                         seq_id, method, url, headers, body = await asyncio.wait_for(
                             request_queue.get(),
                             timeout=0.1
@@ -231,7 +253,7 @@ except Exception as e:
                     )
 
                     # Clear ready flag. We clear it only after processing is finished, so we can verify that there is no new input_request message
-                    kernel_ready.clear()
+                    kernel_io_ready.clear()
 
                 except TimeoutError:
                     pass
@@ -244,7 +266,7 @@ except Exception as e:
         send_task = asyncio.create_task(send_loop())
 
         # Wait for kernel to be ready
-        await kernel_ready.wait()
+        await kernel_io_ready.wait()
 
         # Request sequence counter
         seq_counter = 0
@@ -254,6 +276,8 @@ except Exception as e:
             nonlocal seq_counter
 
             try:
+                # TODO check if the request is to the proxy itself
+
                 # Generate sequence ID
                 seq_id = seq_counter
                 seq_counter += 1
@@ -263,9 +287,13 @@ except Exception as e:
                 body_str = body.decode('utf-8') if body else ""
 
                 # Create future for response
-                response_future = asyncio.Future()
-                pending_responses[seq_id] = response_future
+                #response_future = asyncio.Future()
+                pending_responses[seq_id] = asyncio.Queue() #response_future
 
+                if verbose:
+                    print(f"{seq_id} [>>>] outbound connection to {request.host}")
+                if very_verbose:
+                    print(f"{seq_id}       {request.method} {request.url}")
                 # Queue the request
                 await request_queue.put((
                     seq_id,
@@ -277,15 +305,18 @@ except Exception as e:
 
                 # Wait for response with timeout
                 try:
-                    result = await asyncio.wait_for(response_future, timeout=timeout)
+                    #result = await asyncio.wait_for(pending_responses[seq_id], timeout=timeout)
+                    result = await asyncio.wait_for(pending_responses[seq_id].get(), timeout=timeout)
                 except asyncio.TimeoutError:
-                    pending_responses.pop(seq_id, None)
+                    #pending_responses.pop(seq_id, None)
+                    pending_responses[seq_id].shutdown() # Close the queue
                     return web.Response(
                         text=json.dumps({'error': 'Request timeout'}),
                         status=504,
                         content_type='application/json'
                     )
 
+                pending_responses[seq_id].shutdown() # Close the queue
                 # Check for errors
                 if not result.get('ok', False):
                     if 'error' in result:
@@ -304,6 +335,7 @@ except Exception as e:
 
             except Exception as e:
                 print(f"proxy_handler() : error : {e}")
+                pending_responses[seq_id].shutdown() # Close the queue
                 return web.Response(
                     text=json.dumps({'error': str(e)}),
                     status=500,
@@ -314,13 +346,14 @@ except Exception as e:
         app = web.Application()
         app.router.add_route('*', '/{path:.*}', proxy_handler)
 
+        print(f"[main] HTTP Proxy Mode started on http://{host}:{port}")
+        print(f"[main] All requests will be forwarded through Jupyter kernel")
+
         # Start server
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, host, port)
         await site.start()
 
-        print(f"[main] HTTP Proxy Mode started on http://{host}:{port}")
-        print(f"[main] All requests will be forwarded through Jupyter kernel")
 
         return runner, receive_task, send_task

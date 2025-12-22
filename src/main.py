@@ -25,7 +25,7 @@ async def http_proxy(base_args, args):
         cli.create_session()
         await cli.connect_websocket()
         try:
-            runner = await cli.start_http_proxy_mode(host=args.bind, port=args.port, timeout=args.timeout)
+            runner = await cli.start_http_proxy_mode(host=args.bind, port=args.port, timeout=args.timeout, verbose=base_args.verbose, very_verbose=base_args.very_verbose)
         except asyncio.CancelledError:
             print("shutting down...")
             await runner.cleanup()
@@ -51,6 +51,8 @@ def main():
     def add_default_args(p):
         p.add_argument('-t', '--token', help='jupyter api token')
         p.add_argument('-u', '--url', default="http://localhost:8888", help='jupyter server url')
+        p.add_argument('-v', '--verbose', action='store_true', help='print verbose log')
+        p.add_argument('-vv', '--very-verbose', action='store_true', help='print debug logs')
 
     def no_token(p):
         p.print_help()
