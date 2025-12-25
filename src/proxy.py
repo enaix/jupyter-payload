@@ -3,6 +3,7 @@ import client
 import asyncio
 from aiohttp import web
 import json
+import threading
 
 
 class JupyterClientProxy(client.JupyterKernelClient):
@@ -132,6 +133,7 @@ except Exception as e:
         request_queue = asyncio.Queue()
 
         # Dictionary to track pending responses by sequence ID
+        # TODO TESTING ONLY, should remove this with a proper data structure to avoid storing old queues
         pending_responses = {}
 
         # Kernel ready flag
@@ -141,6 +143,9 @@ except Exception as e:
         kernel_msg_id = None
         kernel_msg_header = None
         input_request_header = None
+
+        # Verify that seq_id increment is atomic
+        lock = threading.Lock()
 
         # Start the HTTP request handler code in the kernel
         print("[main] starting kernel HTTP handler...")
@@ -175,6 +180,7 @@ except Exception as e:
 
                             try:
                                 # Parse JSON response
+                                # TODO check if the stream message type can arrive in chunks
                                 result = json.loads(text)
                                 seq_id = result.get('seq_id')
 
@@ -279,11 +285,10 @@ except Exception as e:
             nonlocal seq_counter
 
             try:
-                # TODO check if the request is to the proxy itself
-
                 # Generate sequence ID
-                seq_id = seq_counter
-                seq_counter += 1
+                with lock:
+                    seq_id = seq_counter
+                    seq_counter += 1
 
                 if verbose:
                     print(f"{seq_id} [>>>] outbound connection to {request.host}")
